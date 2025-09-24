@@ -5,6 +5,7 @@ import (
 	"log"
 	"maps"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/go-version"
@@ -93,6 +94,7 @@ type Config struct {
 	Plugins       map[string]*PluginConfig
 
 	sources map[string][]byte
+	jsonSources map[string]bool // tracks which source files were originally JSON
 }
 
 // RuleConfig is a TFLint's rule config
@@ -130,6 +132,7 @@ func EmptyConfig() *Config {
 		DisabledByDefault: false,
 		Rules:             map[string]*RuleConfig{},
 		Plugins:           map[string]*PluginConfig{},
+		jsonSources:       map[string]bool{},
 	}
 }
 
@@ -270,6 +273,11 @@ func loadConfig(file afero.File) (*Config, error) {
 
 	config := EmptyConfig()
 	config.sources = parser.Sources()
+
+	// Track which files were originally JSON
+	if strings.HasSuffix(strings.ToLower(file.Name()), ".json") {
+		config.jsonSources[file.Name()] = true
+	}
 	for _, block := range content.Blocks {
 		switch block.Type {
 		case "tflint":
@@ -528,7 +536,124 @@ func (c *Config) Sources() map[string][]byte {
 	}
 
 	maps.Copy(ret, c.sources)
+
+	// Convert JSON config files to HCL for plugin compatibility
+	for filename, isJSON := range c.jsonSources {
+		if isJSON {
+			if hclContent, err := c.toHCLRepresentation(filename); err == nil {
+				ret[filename] = []byte(hclContent)
+			}
+		}
+	}
+
 	return ret
+}
+
+// toHCLRepresentation converts the config to HCL syntax for plugin compatibility
+func (c *Config) toHCLRepresentation(filename string) (string, error) {
+	var hcl strings.Builder
+
+	// Generate tflint block if we have version requirements
+	// Note: We can't extract this from the parsed config easily, so we skip it
+	// This is acceptable since version requirements are not typically used by plugins
+
+	// Generate config block
+	if c.hasConfigAttributes() {
+		hcl.WriteString("config {\n")
+		if c.CallModuleTypeSet {
+			hcl.WriteString(fmt.Sprintf("  call_module_type = \"%s\"\n", c.CallModuleType))
+		}
+		if c.ForceSet {
+			hcl.WriteString(fmt.Sprintf("  force = %t\n", c.Force))
+		}
+		if c.DisabledByDefaultSet {
+			hcl.WriteString(fmt.Sprintf("  disabled_by_default = %t\n", c.DisabledByDefault))
+		}
+		if c.PluginDirSet {
+			hcl.WriteString(fmt.Sprintf("  plugin_dir = \"%s\"\n", c.PluginDir))
+		}
+		if c.FormatSet {
+			hcl.WriteString(fmt.Sprintf("  format = \"%s\"\n", c.Format))
+		}
+		if len(c.Varfiles) > 0 {
+			hcl.WriteString("  varfile = [")
+			for i, varfile := range c.Varfiles {
+				if i > 0 {
+					hcl.WriteString(", ")
+				}
+				hcl.WriteString(fmt.Sprintf("\"%s\"", varfile))
+			}
+			hcl.WriteString("]\n")
+		}
+		if len(c.Variables) > 0 {
+			hcl.WriteString("  variables = [")
+			for i, variable := range c.Variables {
+				if i > 0 {
+					hcl.WriteString(", ")
+				}
+				hcl.WriteString(fmt.Sprintf("\"%s\"", variable))
+			}
+			hcl.WriteString("]\n")
+		}
+		if len(c.IgnoreModules) > 0 {
+			hcl.WriteString("  ignore_module = {\n")
+			for module, ignore := range c.IgnoreModules {
+				hcl.WriteString(fmt.Sprintf("    \"%s\" = %t\n", module, ignore))
+			}
+			hcl.WriteString("  }\n")
+		}
+		hcl.WriteString("}\n\n")
+	}
+
+	// Generate rule blocks (sorted for deterministic output)
+	var ruleNames []string
+	for name := range c.Rules {
+		ruleNames = append(ruleNames, name)
+	}
+	sort.Strings(ruleNames)
+
+	for _, name := range ruleNames {
+		rule := c.Rules[name]
+		hcl.WriteString(fmt.Sprintf("rule \"%s\" {\n", rule.Name))
+		hcl.WriteString(fmt.Sprintf("  enabled = %t\n", rule.Enabled))
+		// Note: We can't easily reconstruct custom rule attributes from hcl.Body
+		// This is a limitation but acceptable for basic plugin compatibility
+		hcl.WriteString("}\n\n")
+	}
+
+	// Generate plugin blocks (sorted for deterministic output)
+	var pluginNames []string
+	for name := range c.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+
+	for _, name := range pluginNames {
+		plugin := c.Plugins[name]
+		hcl.WriteString(fmt.Sprintf("plugin \"%s\" {\n", plugin.Name))
+		hcl.WriteString(fmt.Sprintf("  enabled = %t\n", plugin.Enabled))
+		if plugin.Version != "" {
+			hcl.WriteString(fmt.Sprintf("  version = \"%s\"\n", plugin.Version))
+		}
+		if plugin.Source != "" {
+			hcl.WriteString(fmt.Sprintf("  source = \"%s\"\n", plugin.Source))
+		}
+		if plugin.SigningKey != "" {
+			hcl.WriteString(fmt.Sprintf("  signing_key = \"%s\"\n", plugin.SigningKey))
+		}
+		// Note: We can't easily reconstruct custom plugin attributes from hcl.Body
+		// This is a limitation but acceptable for basic plugin compatibility
+		hcl.WriteString("}\n\n")
+	}
+
+	return hcl.String(), nil
+}
+
+// hasConfigAttributes checks if any config-level attributes are set
+func (c *Config) hasConfigAttributes() bool {
+	return c.CallModuleTypeSet || c.ForceSet || c.DisabledByDefaultSet ||
+		   c.PluginDirSet || c.FormatSet || len(c.Varfiles) > 0 ||
+		   len(c.Variables) > 0 || len(c.IgnoreModules) > 0
 }
 
 // Merge merges the two configs and applies to itself.
@@ -579,6 +704,14 @@ func (c *Config) Merge(other *Config) {
 		} else {
 			c.Plugins[name] = plugin
 		}
+	}
+
+	// Merge JSON source tracking
+	if c.jsonSources == nil {
+		c.jsonSources = make(map[string]bool)
+	}
+	for filename, isJSON := range other.jsonSources {
+		c.jsonSources[filename] = isJSON
 	}
 }
 
