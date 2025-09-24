@@ -1615,3 +1615,280 @@ plugin "terraform" {
 		})
 	}
 }
+
+func TestJSONToHCLConversion(t *testing.T) {
+	tests := []struct {
+		name          string
+		config        *Config
+		filename      string
+		expectedHCL   string
+	}{
+		{
+			name: "basic config with all attributes",
+			config: &Config{
+				CallModuleType:       terraform.CallAllModule,
+				CallModuleTypeSet:    true,
+				Force:                true,
+				ForceSet:             true,
+				DisabledByDefault:    true,
+				DisabledByDefaultSet: true,
+				PluginDir:            "/custom/plugin/dir",
+				PluginDirSet:         true,
+				Format:               "compact",
+				FormatSet:            true,
+				Varfiles:             []string{"vars1.tfvars", "vars2.tfvars"},
+				Variables:            []string{"env=prod", "region=us-west-2"},
+				IgnoreModules: map[string]bool{
+					"github.com/example/module1": true,
+					"github.com/example/module2": false,
+				},
+				Rules: map[string]*RuleConfig{
+					"test_rule_1": {
+						Name:    "test_rule_1",
+						Enabled: true,
+					},
+					"test_rule_2": {
+						Name:    "test_rule_2",
+						Enabled: false,
+					},
+				},
+				Plugins: map[string]*PluginConfig{
+					"test_plugin": {
+						Name:       "test_plugin",
+						Enabled:    true,
+						Version:    "1.0.0",
+						Source:     "github.com/example/tflint-plugin",
+						SigningKey: "test-key",
+					},
+				},
+				jsonSources: map[string]bool{
+					"test.json": true,
+				},
+			},
+			filename: "test.json",
+			expectedHCL: `config {
+  call_module_type = "all"
+  force = true
+  disabled_by_default = true
+  plugin_dir = "/custom/plugin/dir"
+  format = "compact"
+  varfile = ["vars1.tfvars", "vars2.tfvars"]
+  variables = ["env=prod", "region=us-west-2"]
+  ignore_module = {
+    "github.com/example/module1" = true
+    "github.com/example/module2" = false
+  }
+}
+
+rule "test_rule_1" {
+  enabled = true
+}
+
+rule "test_rule_2" {
+  enabled = false
+}
+
+plugin "test_plugin" {
+  enabled = true
+  version = "1.0.0"
+  source = "github.com/example/tflint-plugin"
+  signing_key = "test-key"
+}
+
+`,
+		},
+		{
+			name: "minimal config with only rules",
+			config: &Config{
+				Rules: map[string]*RuleConfig{
+					"aws_instance_invalid_type": {
+						Name:    "aws_instance_invalid_type",
+						Enabled: false,
+					},
+				},
+				jsonSources: map[string]bool{
+					"minimal.json": true,
+				},
+			},
+			filename: "minimal.json",
+			expectedHCL: `rule "aws_instance_invalid_type" {
+  enabled = false
+}
+
+`,
+		},
+		{
+			name: "only plugins config",
+			config: &Config{
+				Plugins: map[string]*PluginConfig{
+					"terraform": {
+						Name:    "terraform",
+						Enabled: true,
+					},
+					"aws": {
+						Name:    "aws",
+						Enabled: false,
+						Version: "0.15.0",
+						Source:  "github.com/terraform-linters/tflint-ruleset-aws",
+					},
+				},
+				jsonSources: map[string]bool{
+					"plugins.json": true,
+				},
+			},
+			filename: "plugins.json",
+			expectedHCL: `plugin "aws" {
+  enabled = false
+  version = "0.15.0"
+  source = "github.com/terraform-linters/tflint-ruleset-aws"
+}
+
+plugin "terraform" {
+  enabled = true
+}
+
+`,
+		},
+		{
+			name: "empty config",
+			config: &Config{
+				jsonSources: map[string]bool{
+					"empty.json": true,
+				},
+			},
+			filename:    "empty.json",
+			expectedHCL: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			hclContent, err := test.config.toHCLRepresentation(test.filename)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if hclContent != test.expectedHCL {
+				t.Errorf("HCL conversion mismatch:\nwant:\n%s\ngot:\n%s", test.expectedHCL, hclContent)
+			}
+		})
+	}
+}
+
+func TestSourcesWithJSONConversion(t *testing.T) {
+	tests := []struct {
+		name         string
+		file         string
+		files        map[string]string
+		wantSources  map[string]string // filename -> expected content (HCL format for JSON files)
+	}{
+		{
+			name: "JSON config converted to HCL in sources",
+			file: "config.json",
+			files: map[string]string{
+				"config.json": `{
+  "config": {
+    "force": true,
+    "disabled_by_default": false
+  },
+  "rule": {
+    "test_rule": {
+      "enabled": false
+    }
+  }
+}`,
+			},
+			wantSources: map[string]string{
+				"config.json": `config {
+  force = true
+  disabled_by_default = false
+}
+
+rule "test_rule" {
+  enabled = false
+}
+
+`,
+			},
+		},
+		{
+			name: "mixed HCL and JSON configs",
+			file: "",
+			files: map[string]string{
+				".tflint.hcl": `config {
+  force = false
+}`,
+				"extra.json": `{
+  "rule": {
+    "json_rule": {
+      "enabled": true
+    }
+  }
+}`,
+			},
+			wantSources: map[string]string{
+				".tflint.hcl": `config {
+  force = false
+}`,
+			},
+		},
+		{
+			name: "HCL config unchanged in sources",
+			file: "config.hcl",
+			files: map[string]string{
+				"config.hcl": `config {
+  force = true
+}
+
+rule "test_rule" {
+  enabled = false
+}`,
+			},
+			wantSources: map[string]string{
+				"config.hcl": `config {
+  force = true
+}
+
+rule "test_rule" {
+  enabled = false
+}`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Temporarily disable bundled plugin for this test
+			origDisabled := DisableBundledPlugin
+			DisableBundledPlugin = true
+			defer func() { DisableBundledPlugin = origDisabled }()
+
+			fs := afero.Afero{Fs: afero.NewMemMapFs()}
+			for name, src := range test.files {
+				if err := fs.WriteFile(name, []byte(src), os.ModePerm); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			cfg, err := LoadConfig(fs, test.file)
+			if err != nil {
+				t.Fatalf("failed to load config: %s", err)
+			}
+
+			sources := cfg.Sources()
+
+			// Check that all expected sources are present with correct content
+			for filename, expectedContent := range test.wantSources {
+				actualContent, exists := sources[filename]
+				if !exists {
+					t.Errorf("Expected source file %q not found in sources map", filename)
+					continue
+				}
+
+				if string(actualContent) != expectedContent {
+					t.Errorf("Source content mismatch for %q:\nwant:\n%s\ngot:\n%s", filename, expectedContent, string(actualContent))
+				}
+			}
+		})
+	}
+}

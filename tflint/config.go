@@ -5,6 +5,7 @@ import (
 	"log"
 	"maps"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/go-version"
@@ -604,8 +605,15 @@ func (c *Config) toHCLRepresentation(filename string) (string, error) {
 		hcl.WriteString("}\n\n")
 	}
 
-	// Generate rule blocks
-	for _, rule := range c.Rules {
+	// Generate rule blocks (sorted for deterministic output)
+	var ruleNames []string
+	for name := range c.Rules {
+		ruleNames = append(ruleNames, name)
+	}
+	sort.Strings(ruleNames)
+
+	for _, name := range ruleNames {
+		rule := c.Rules[name]
 		hcl.WriteString(fmt.Sprintf("rule \"%s\" {\n", rule.Name))
 		hcl.WriteString(fmt.Sprintf("  enabled = %t\n", rule.Enabled))
 		// Note: We can't easily reconstruct custom rule attributes from hcl.Body
@@ -613,8 +621,15 @@ func (c *Config) toHCLRepresentation(filename string) (string, error) {
 		hcl.WriteString("}\n\n")
 	}
 
-	// Generate plugin blocks
-	for _, plugin := range c.Plugins {
+	// Generate plugin blocks (sorted for deterministic output)
+	var pluginNames []string
+	for name := range c.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+
+	for _, name := range pluginNames {
+		plugin := c.Plugins[name]
 		hcl.WriteString(fmt.Sprintf("plugin \"%s\" {\n", plugin.Name))
 		hcl.WriteString(fmt.Sprintf("  enabled = %t\n", plugin.Enabled))
 		if plugin.Version != "" {
