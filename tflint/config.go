@@ -92,7 +92,8 @@ type Config struct {
 	Rules         map[string]*RuleConfig
 	Plugins       map[string]*PluginConfig
 
-	sources map[string][]byte
+	sources        map[string][]byte
+	jsonConfigFile string // Track if config was loaded from a JSON file
 }
 
 // RuleConfig is a TFLint's rule config
@@ -270,6 +271,10 @@ func loadConfig(file afero.File) (*Config, error) {
 
 	config := EmptyConfig()
 	config.sources = parser.Sources()
+	// Track if this was loaded from a JSON file
+	if strings.HasSuffix(strings.ToLower(file.Name()), ".json") {
+		config.jsonConfigFile = file.Name()
+	}
 	for _, block := range content.Blocks {
 		switch block.Type {
 		case "tflint":
@@ -529,6 +534,35 @@ func (c *Config) Sources() map[string][]byte {
 
 	maps.Copy(ret, c.sources)
 	return ret
+}
+
+// CheckJSONCompatibility checks if the current config can be used with the given SDK versions.
+// Returns an error if a JSON config file is used with any plugin that has SDK version < 0.23.0.
+func (c *Config) CheckJSONCompatibility(sdkVersions map[string]*version.Version) error {
+	// Only check if config was loaded from JSON
+	if c.jsonConfigFile == "" {
+		return nil
+	}
+
+	minVersion := version.Must(version.NewVersion("0.23.0"))
+	incompatiblePlugins := []string{}
+
+	for name, sdkVersion := range sdkVersions {
+		if sdkVersion.LessThan(minVersion) {
+			incompatiblePlugins = append(incompatiblePlugins, fmt.Sprintf("%s (SDK v%s)", name, sdkVersion))
+		}
+	}
+
+	if len(incompatiblePlugins) > 0 {
+		return fmt.Errorf(
+			"JSON configuration files (.tflint.json) require all plugins to use SDK version 0.23.0 or later. "+
+			"The following plugins are incompatible: %s. "+
+			"Please either update your plugins or use an HCL configuration file (.tflint.hcl) instead",
+			strings.Join(incompatiblePlugins, ", "),
+		)
+	}
+
+	return nil
 }
 
 // Merge merges the two configs and applies to itself.

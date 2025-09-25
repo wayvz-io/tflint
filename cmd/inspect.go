@@ -125,7 +125,7 @@ func (cli *CLI) inspectModule(opts Options, dir string, filterFiles []string) (t
 		return issues, changes, err
 	}
 
-	// Check preconditions
+	// Check SDK version compatibility
 	sdkVersions := map[string]*version.Version{}
 	for name, ruleset := range rulesetPlugin.RuleSets {
 		sdkVersion, err := ruleset.SDKVersion()
@@ -259,6 +259,28 @@ func launchPlugins(config *tflint.Config, fix bool) (*plugin.Plugin, error) {
 	rulesetPlugin, err := plugin.Discovery(config)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to initialize plugins; %w", err)
+	}
+
+	// First, collect SDK versions from all plugins
+	sdkVersions := map[string]*version.Version{}
+	for name, ruleset := range rulesetPlugin.RuleSets {
+		sdkVersion, err := ruleset.SDKVersion()
+		if err != nil {
+			if st, ok := status.FromError(err); ok && st.Code() == codes.Unimplemented {
+				// SDKVersion endpoint is available in tflint-plugin-sdk v0.14+.
+				// Assume old version for compatibility
+				sdkVersions[name] = version.Must(version.NewVersion("0.13.0"))
+			} else {
+				return nil, fmt.Errorf(`Failed to get plugin "%s" SDK version; %w`, name, err)
+			}
+		} else {
+			sdkVersions[name] = sdkVersion
+		}
+	}
+
+	// Check if JSON config is compatible with plugin SDK versions
+	if err := config.CheckJSONCompatibility(sdkVersions); err != nil {
+		return nil, err
 	}
 
 	rulesets := []tflint.RuleSet{}

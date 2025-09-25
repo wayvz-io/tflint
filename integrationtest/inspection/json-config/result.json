@@ -2,7 +2,7 @@
   "issues": [],
   "errors": [
     {
-      "message": "Failed to apply config to \"terraform\" plugin; <nil>: Unexpected file extension; The file name `.tflint.json` is a file with an unexpected extension. Valid extensions are `.tf`, `.tf.json`, and `.hcl`.",
+      "message": "JSON configuration files (.tflint.json) require all plugins to use SDK version 0.23.0 or later. The following plugins are incompatible: terraform (SDK v0.22.0). Please either update your plugins or use an HCL configuration file (.tflint.hcl) instead",
       "severity": "error"
     }
   ]
