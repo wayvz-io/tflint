@@ -192,3 +192,5 @@ require (
 )
 
 tool golang.org/x/vuln/cmd/govulncheck
+
+replace github.com/terraform-linters/tflint-plugin-sdk => ../tflint-plugin-sdk

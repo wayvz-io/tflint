@@ -1,9 +1,0 @@
-{
-  "issues": [],
-  "errors": [
-    {
-      "message": "Failed to check ruleset; failed to check \"terraform_module_pinned_source\" rule: <nil>: Unexpected file extension; The file name `.tflint.json` is a file with an unexpected extension. Valid extensions are `.tf`, `.tf.json`, and `.hcl`.",
-      "severity": "error"
-    }
-  ]
-}

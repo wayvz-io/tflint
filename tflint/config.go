@@ -5,6 +5,7 @@ import (
 	"log"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hashicorp/go-version"
@@ -256,6 +257,15 @@ func loadConfig(file afero.File) (*Config, error) {
 	// Parse based on file extension
 	switch {
 	case strings.HasSuffix(strings.ToLower(filename), ".json"):
+		// JSON config files must end with "tflint.json" to avoid confusion
+		// with other JSON files (e.g., terraform.tfvars.json)
+		if !strings.HasSuffix(strings.ToLower(filename), "tflint.json") {
+			return nil, fmt.Errorf(
+				"JSON configuration file must be named '.tflint.json' or end with 'tflint.json'. "+
+					"Got: %s. Please rename the file or use an HCL configuration file.",
+				filepath.Base(filename),
+			)
+		}
 		f, diags = parser.ParseJSON(src, filename)
 	default:
 		f, diags = parser.ParseHCL(src, filename)
