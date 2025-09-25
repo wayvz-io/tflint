@@ -1,0 +1,9 @@
+{
+  "issues": [],
+  "errors": [
+    {
+      "message": "Failed to apply config to \"terraform\" plugin; <nil>: Unexpected file extension; The file name `.tflint.json` is a file with an unexpected extension. Valid extensions are `.tf`, `.tf.json`, and `.hcl`.",
+      "severity": "error"
+    }
+  ]
+}
